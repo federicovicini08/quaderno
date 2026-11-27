@@ -19,15 +19,11 @@
 <body>
   <div id="app" aria-live="polite"></div>
   <div id="toast" role="status" aria-live="polite"></div>
-  <dialog id="menu" class="sheet">
-    <form method="dialog">
-      <h2>Quaderno</h2>
-      <p class="muted" id="menuInfo"></p>
-      <button type="button" class="sheet-btn" data-act="sync">Aggiorna ora</button>
-      <button type="button" class="sheet-btn danger" data-act="logout">Scollega GitHub da questo dispositivo</button>
-      <button class="sheet-btn ghost" value="close">Chiudi</button>
-    </form>
-  </dialog>
+  <dialog id="foglio" class="sheet"></dialog>
+  <dialog id="editor" class="sheet sheet-wide"></dialog>
   <script src="app.js"></script>
+  <script src="personale.js"></script>
+  <script src="note.js"></script>
+  <script src="studio.js"></script>
 </body>
 </html>

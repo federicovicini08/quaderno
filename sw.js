@@ -1,14 +1,23 @@
 /* Service worker: tiene l'app disponibile offline.
-   Prima prova la rete (così le nuove versioni arrivano subito), se non c'è usa la copia salvata.
+   App: prima prova la rete (così le nuove versioni arrivano subito), se non c'è usa la copia salvata.
+   KaTeX (formule): copia salvata, scaricata una volta sola.
    Le dispense sono salvate a parte da app.js (cache "quaderno-contenuti-*"). */
-const SHELL = 'quaderno-shell-v3';
+const SHELL = 'quaderno-shell-v4';
+const LIBRERIE = 'quaderno-librerie-v1';
+const KATEX = 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/';
 const FILES = [
-  './', './index.html', './styles.css', './app.js', './manifest.webmanifest',
+  './', './index.html', './styles.css', './app.js', './personale.js', './note.js', './studio.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
 ];
+const KATEX_FILES = ['katex.min.js', 'katex.min.css', 'contrib/auto-render.min.js'].map((f) => KATEX + f);
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
+  e.waitUntil((async () => {
+    const c = await caches.open(SHELL);
+    await c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' })));
+    try { const l = await caches.open(LIBRERIE); await l.addAll(KATEX_FILES.map((u) => new Request(u, { mode: 'cors' }))); } catch { /* le prendo al primo uso */ }
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (e) => {
@@ -25,7 +34,19 @@ function conTimeout(p, ms) {
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;
-  if (req.method !== 'GET' || !req.url.startsWith(self.registration.scope)) return;
+  if (req.method !== 'GET') return;
+  if (req.url.startsWith(KATEX)) {
+    e.respondWith((async () => {
+      const c = await caches.open(LIBRERIE);
+      const salvata = await c.match(req, { ignoreVary: true });
+      if (salvata) return salvata;
+      const r = await fetch(req);
+      if (r.ok || r.type === 'opaque') c.put(req, r.clone());
+      return r;
+    })());
+    return;
+  }
+  if (!req.url.startsWith(self.registration.scope)) return;
   e.respondWith((async () => {
     const c = await caches.open(SHELL);
     try {

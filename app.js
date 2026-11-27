@@ -1,9 +1,12 @@
 'use strict';
 
 /* Quaderno: legge le dispense dall'archivio GitHub privato, le salva sul
-   dispositivo per l'uso offline e le mostra con indice e segnalibri. */
+   dispositivo per l'uso offline e le mostra con indice, segnalibri, note,
+   evidenziazioni, mappe e flashcard. File: app.js (base), personale.js
+   (sincronizzazione dei dati personali), note.js (lettore avanzato),
+   studio.js (mappe e flashcard). */
 
-const VERSIONE = '0.1.2';
+const VERSIONE = '0.2.0';
 const ARCHIVIO_PREDEFINITO = 'federicovicini08/dispense';
 const CACHE_CONTENUTI = 'quaderno-contenuti-v1';
 
@@ -16,7 +19,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* spazio pieno o storage bloccato */ } },
   del(k) { try { localStorage.removeItem(k); } catch { /* niente */ } },
 };
-const K = { conf: 'q.conf', shas: 'q.shas', meta: 'q.meta', bm: 'q.segnalibri', pos: 'q.posizioni', last: 'q.ultima', side: 'q.indice' };
+const K = { conf: 'q.conf', shas: 'q.shas', meta: 'q.meta', pos: 'q.posizioni', side: 'q.indice' };
 
 const params = new URLSearchParams(location.search);
 // Modalità di prova sul Mac: legge i file dalla cartella accanto invece che da GitHub.
@@ -27,15 +30,23 @@ let data = null;
 const app = $('#app');
 
 /* ---------- Icone ---------- */
+const svg = (d, extra = '') => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"${extra}>${d}</svg>`;
 const ico = {
-  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
-  next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
-  sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></svg>',
+  back: svg('<path d="M15 18l-6-6 6-6"/>'),
+  next: svg('<path d="M9 18l6-6-6-6"/>'),
+  sync: svg('<path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/>'),
   more: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
-  toc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h13"/></svg>',
-  bm: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 3h12v18l-6-4.5L6 21z"/></svg>',
+  toc: svg('<path d="M4 6h16M4 12h10M4 18h13"/>'),
+  bm: svg('<path d="M6 3h12v18l-6-4.5L6 21z"/>'),
   bmOn: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 3h12v18l-6-4.5L6 21z"/></svg>',
-  x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  x: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
+  mappa: svg('<circle cx="12" cy="12" r="3"/><circle cx="4" cy="5" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="4" cy="19" r="2"/><circle cx="20" cy="19" r="2"/><path d="M6 6l4 4M18 6l-4 4M6 18l4-4M18 18l-4-4"/>'),
+  carte: svg('<rect x="3" y="6" width="14" height="14" rx="2"/><path d="M7 2h12a2 2 0 0 1 2 2v12"/>'),
+  nota: svg('<path d="M4 4h16v12H8l-4 4z"/>'),
+  claude: svg('<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/>'),
+  matita: svg('<path d="M4 20h4L20 8l-4-4L4 16z"/><path d="M14 6l4 4"/>'),
+  pdf: svg('<path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/><path d="M9 14h6M9 18h6"/>'),
+  cestino: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
 };
 
 /* ---------- Messaggi ---------- */
@@ -45,9 +56,21 @@ function toast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastT);
-  toastT = setTimeout(() => t.classList.remove('show'), 2800);
+  toastT = setTimeout(() => t.classList.remove('show'), 3000);
 }
 const fmtData = (ms) => new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(ms);
+
+/* Foglio di scelte (menu) riutilizzabile */
+function apriFoglio(titolo, azioni, testo) {
+  const dlg = $('#foglio');
+  dlg.innerHTML = `<div class="sheet-body"><h2>${esc(titolo)}</h2>${testo ? `<p class="muted">${esc(testo)}</p>` : ''}
+    ${azioni.map((a, i) => `<button type="button" class="sheet-btn ${a.classe || ''}" data-i="${i}">${a.icona || ''}<span>${esc(a.label)}</span></button>`).join('')}
+    <button type="button" class="sheet-btn ghost" data-chiudi>Chiudi</button></div>`;
+  dlg.querySelectorAll('[data-i]').forEach((b) => { b.onclick = () => { dlg.close(); azioni[+b.dataset.i].fn(); }; });
+  dlg.querySelector('[data-chiudi]').onclick = () => dlg.close();
+  dlg.onclick = (e) => { if (e.target === dlg) dlg.close(); };
+  dlg.showModal();
+}
 
 /* ---------- Copia offline ---------- */
 const memo = new Map();
@@ -90,10 +113,7 @@ async function scaricaBlob(sha) {
   catch (e) {
     if (e.status === 401 || e.status === 403 || e.status === 404) throw e;
     const j = await gh(`/repos/${conf.repo}/git/blobs/${sha}`);
-    const bin = atob(j.content.replace(/\s/g, ''));
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return new TextDecoder('utf-8').decode(bytes);
+    return b64dec(j.content);
   }
 }
 async function localeGet(path) {
@@ -102,7 +122,7 @@ async function localeGet(path) {
   return r.text();
 }
 
-/* ---------- Sincronizzazione ---------- */
+/* ---------- Sincronizzazione delle dispense ---------- */
 let syncing = false;
 async function sync({ manuale = false } = {}) {
   if (syncing) return;
@@ -111,9 +131,9 @@ async function sync({ manuale = false } = {}) {
   const cambiati = new Set();
   let fase = 'avvio';
   const falliti = [];
+  let remoto = null;
   try {
     const shas = store.get(K.shas, {});
-    let remoto = null;
     if (!LOCALE) {
       fase = 'elenco dei file';
       const albero = await gh(`/repos/${conf.repo}/git/trees/HEAD?recursive=1`);
@@ -157,13 +177,14 @@ async function sync({ manuale = false } = {}) {
     if (falliti.length) { ultimoErrore = 'Non scaricate: ' + falliti.join('; '); toast('Alcune dispense non si sono scaricate: tocca Aggiorna per riprovare'); }
   } catch (e) {
     ultimoErrore = 'Fase: ' + fase + ' — ' + descriviErrore(e);
-    if (e.status === 401) { showLogin('Il token non è più valido o è scaduto. Collegati di nuovo.'); return; }
-    if ((e.status === 403 || e.status === 404) && !LOCALE) { showLogin(MSG_PERMESSI); return; }
+    if (e.status === 401) { syncing = false; setSyncUI(false); showLogin('Il token non è più valido o è scaduto. Collegati di nuovo.'); return; }
+    if ((e.status === 403 || e.status === 404) && !LOCALE) { syncing = false; setSyncUI(false); showLogin(MSG_PERMESSI); return; }
     toast(navigator.onLine ? 'Aggiornamento non riuscito: uso la copia salvata' : 'Sei offline: uso la copia salvata');
-  } finally {
-    syncing = false;
-    setSyncUI(false);
   }
+  // Dati personali (segnalibri, note, evidenziazioni...): non bloccano le dispense se falliscono.
+  try { await sincronizzaPersonali(remoto); } catch { /* riprovo al prossimo giro */ }
+  syncing = false;
+  setSyncUI(false);
   if (!data) {
     const txt = await cacheGet('materie.json');
     if (txt) data = JSON.parse(txt);
@@ -193,8 +214,8 @@ function dopoSync(cambiati) {
     $('#ricollega').onclick = () => showLogin();
     return;
   }
-  if (R && R.d.file && cambiati.has(R.d.file)) { salvaPosizione(); const { m, d } = R; R = null; showReader(m.id, d.id); return; }
-  if (!R) route();
+  if (R && R.d.file && cambiati.has(R.d.file)) { salvaPosizione(true); const { m, d } = R; R = null; showReader(m.id, d.id); return; }
+  if (!R && !$('.login') && !vistaStudioAttiva()) route();
 }
 
 /* ---------- Dati ---------- */
@@ -210,13 +231,29 @@ const chiave = (m, d) => `${m}/${d}`;
 function route() {
   const parti = (location.hash.slice(1) || '/').split('/').filter(Boolean).map(decodeURIComponent);
   if (!LOCALE && !conf) return showLogin();
-  if (R && !(parti[0] === 'd' && parti[1] === R.m.id && parti[2] === R.d.id)) { salvaPosizione(); R = null; }
+  if (R && !(parti[0] === 'd' && parti[1] === R.m.id && parti[2] === R.d.id)) { salvaPosizione(true); chiudiLettore(); }
   if (!data) { app.innerHTML = '<div class="loading">Caricamento…</div>'; return; }
   if (parti[0] === 'm') return showMateria(parti[1]);
   if (parti[0] === 'd') return showReader(parti[1], parti[2], parti[3]);
+  if (parti[0] === 'mappa') return showMappa(parti[1], parti[2]);
+  if (parti[0] === 'flash') return showFlashcard(parti[1], parti[2]);
+  if (parti[0] === 'richieste') return showRichieste();
   return showHome();
 }
 window.addEventListener('hashchange', route);
+
+// Quando cambiano dati personali (qui o da un altro dispositivo) aggiorno ciò che si vede.
+window.addEventListener('DOMContentLoaded', () => suCambioArchivio((path, locale) => {
+  if (R) {
+    if (path === percorsoNote(R.m.id, R.d.id) && !locale) applicaAnnotazioni();
+    if (path === PERCORSI.segnalibri) { R.active = null; aggiornaAttivo(); if (R.tab === 'segnalibri') renderSide(); }
+    if (path === percorsoNote(R.m.id, R.d.id) && R.tab === 'note') renderSide();
+    return;
+  }
+  if (locale) return;
+  const p = (location.hash.slice(1) || '/').split('/').filter(Boolean)[0];
+  if (!p || p === 'm' || p === 'richieste') route();
+}));
 
 /* ---------- Home ---------- */
 function topbarHome() {
@@ -228,11 +265,18 @@ function bindTopbar() {
   $('#syncBtn').onclick = () => sync({ manuale: true });
   $('#menuBtn').onclick = apriMenu;
 }
+function ultimaLettura() {
+  let best = null;
+  for (const p of A.posizioni().vivi()) if (p.m && (!best || p.agg > best.agg)) best = p;
+  const locali = store.get(K.pos, {});
+  for (const [k, p] of Object.entries(locali)) if (p.t && (!best || p.t > best.agg)) { const [m, d] = k.split('/'); best = { ...p, m, d, agg: p.t }; }
+  return best;
+}
 function showHome() {
   document.title = 'Quaderno';
-  const ultima = store.get(K.last, null);
+  const ultima = ultimaLettura();
   const u = ultima && trova(ultima.m, ultima.d);
-  const resume = u && u.d ? `
+  const resume = u && u.d && u.d.file ? `
     <a class="resume" href="#/d/${enc(u.m.id)}/${enc(u.d.id)}" style="--accent:${coloreSicuro(u.m.colore)}">
       <div><div class="label">Riprendi</div><div class="what">${esc(u.d.titolo)}</div>
       <div class="where">${esc(ultima.titolo || u.m.nome)}</div></div>${ico.next}</a>` : '';
@@ -241,17 +285,19 @@ function showHome() {
     return `<a class="card" href="#/m/${enc(m.id)}" style="--accent:${coloreSicuro(m.colore)}">
       <div class="name">${esc(m.nome)}</div><div class="count">${n === 1 ? '1 dispensa' : n + ' dispense'}</div></a>`;
   }).join('');
+  const aperte = A.richieste().vivi().filter((r) => r.stato !== 'fatta').length;
   const meta = store.get(K.meta, null);
   app.innerHTML = `${topbarHome()}<main class="page">
     ${resume ? `<h2 class="section-title">Continua</h2>${resume}` : ''}
     <h2 class="section-title">Materie</h2><div class="grid">${carte}</div>
     <h2 class="section-title">Segnalibri</h2>${listaSegnalibri()}
+    ${aperte ? `<h2 class="section-title">Richieste di modifica</h2><a class="row" href="#/richieste"><span class="bar"></span><div class="txt"><div class="t">${aperte === 1 ? '1 richiesta aperta' : aperte + ' richieste aperte'}</div><div class="s">Le applico quando mi scrivi "applica le richieste" in Claude Code</div></div>${ico.next}</a>` : ''}
     <p class="foot">${meta ? 'Ultimo aggiornamento: ' + esc(fmtData(meta.ultimo)) : ''}${LOCALE ? ' · modalità di prova' : ''}</p></main>`;
   bindTopbar();
   bindSegnalibri(app);
 }
 function listaSegnalibri(filtro) {
-  const tutti = store.get(K.bm, []).filter((b) => !filtro || filtro(b));
+  const tutti = A.segnalibri().vivi().filter((b) => !filtro || filtro(b)).sort((a, b) => (b.creato || 0) - (a.creato || 0));
   if (!tutti.length) return '<div class="empty">Nessun segnalibro. Mentre leggi, tocca l\'icona del segnalibro in alto per salvare la sezione.</div>';
   return '<div class="list">' + tutti.map((b) => {
     const { m, d } = trova(b.m, b.d);
@@ -266,7 +312,7 @@ function bindSegnalibri(root, dopo) {
   root.querySelectorAll('[data-del]').forEach((btn) => {
     btn.onclick = (e) => {
       e.preventDefault();
-      store.set(K.bm, store.get(K.bm, []).filter((b) => b.id !== btn.dataset.del));
+      A.segnalibri().togli(btn.dataset.del);
       toast('Segnalibro eliminato');
       dopo ? dopo() : route();
     };
@@ -279,7 +325,10 @@ function showMateria(mId) {
   if (!m) return showHome();
   document.title = m.nome + ' · Quaderno';
   const righe = m.dispense.map((d) => d.file
-    ? `<a class="row" href="#/d/${enc(m.id)}/${enc(d.id)}"><span class="bar"></span><div class="txt"><div class="t">${esc(d.titolo)}</div></div>${ico.next.replace('<svg', '<svg width="20" height="20"')}</a>`
+    ? `<div class="row dispensa-row"><span class="bar"></span>
+        <a class="txt" href="#/d/${enc(m.id)}/${enc(d.id)}" style="text-decoration:none"><div class="t">${esc(d.titolo)}</div><div class="s">Apri la dispensa</div></a>
+        <a class="chip-btn" href="#/mappa/${enc(m.id)}/${enc(d.id)}">${ico.mappa}<span>Mappa</span></a>
+        <a class="chip-btn" href="#/flash/${enc(m.id)}/${enc(d.id)}">${ico.carte}<span>Flashcard</span></a></div>`
     : `<div class="row disabled"><span class="bar"></span><div class="txt"><div class="t">${esc(d.titolo)}</div><div class="s">La sto ancora convertendo</div></div><span class="badge">In arrivo</span></div>`).join('');
   app.innerHTML = `<div style="--accent:${coloreSicuro(m.colore)}">
     <header class="topbar"><a class="icon-btn" href="#/" aria-label="Indietro">${ico.back}</a>
@@ -300,27 +349,35 @@ let R = null; // stato della dispensa aperta
 const largo = () => matchMedia('(min-width: 900px)').matches;
 
 function prepara(html, colore) {
-  // Forza il tema scuro già presente nelle dispense e nasconde il loro indice interno.
-  let h = html.replace(/@media\s*\(\s*prefers-color-scheme\s*:\s*dark\s*\)/gi, '@media all');
+  // Tema scuro delle dispense solo sullo schermo: in stampa/PDF resta il tema chiaro originale.
+  let h = html.replace(/@media\s*\(\s*prefers-color-scheme\s*:\s*dark\s*\)/gi, '@media screen');
   const css = `<style id="quaderno">
-    html{color-scheme:dark;-webkit-text-size-adjust:100%}
-    body{background:#121419!important;color:#e6e6e6}
+    @media screen{
+      html{color-scheme:dark;-webkit-text-size-adjust:100%}
+      body{background:#121419!important;color:#e6e6e6}
+      h1{border-color:${colore}!important}
+      body>h1:first-of-type{color:${colore}!important;border:0!important}
+      ::selection{background:${colore}66}
+      a{color:${colore}}
+    }
     #TOC{display:none!important}
-    h1{border-color:${colore}!important}
-    body>h1:first-of-type{color:${colore}!important;border:0!important}
-    ::selection{background:${colore}55}
     img,svg,video{max-width:100%;height:auto}
-    a{color:${colore}}
-  </style>`;
+    ${CSS_ANNOTAZIONI(colore)}
+  </style>${linkKatex()}`;
   return /<\/head>/i.test(h) ? h.replace(/<\/head>/i, css + '</head>') : css + h;
+}
+
+function chiudiLettore() {
+  nascondiBarraSelezione();
+  R = null;
 }
 
 function showReader(mId, dId, anchor) {
   const { m, d } = trova(mId, dId);
-  if (!d) return showHome();
+  if (!d || !d.file) return showHome();
   if (R && R.m.id === mId && R.d.id === dId) { if (anchor && R.doc) vaiA(anchor); return; }
   const colore = coloreSicuro(m.colore);
-  R = { m, d, colore, heads: [], active: null, tab: 'indice', doc: null, win: null };
+  R = { m, d, colore, heads: [], active: null, tab: 'indice', doc: null, win: null, modello: null, selez: null };
   document.title = d.titolo + ' · Quaderno';
   const aperto = largo() ? store.get(K.side, true) : false;
   app.innerHTML = `<div class="reader${aperto ? ' side-open' : ''}" style="--accent:${colore}">
@@ -329,15 +386,19 @@ function showReader(mId, dId, anchor) {
       <button class="icon-btn" id="tocBtn" aria-label="Indice">${ico.toc}</button>
       <div class="title"><div class="over">${esc(m.nome)}</div><div class="main">${esc(d.titolo)}</div></div>
       <button class="icon-btn" id="bmBtn" aria-label="Aggiungi segnalibro">${ico.bm}</button>
+      <button class="icon-btn" id="toolsBtn" aria-label="Strumenti">${ico.more}</button>
     </header>
     <div class="reader-body">
-      <aside class="side" aria-label="Indice e segnalibri">
-        <div class="tabs"><button class="tab active" data-tab="indice">Indice</button><button class="tab" data-tab="segnalibri">Segnalibri</button></div>
+      <aside class="side" aria-label="Indice, segnalibri e note">
+        <div class="tabs"><button class="tab active" data-tab="indice">Indice</button><button class="tab" data-tab="segnalibri">Segnalibri</button><button class="tab" data-tab="note">Note</button></div>
         <nav class="side-list" id="sideList"></nav>
       </aside>
       <div class="scrim" id="scrim"></div>
-      <iframe class="doc" id="doc" title="${esc(d.titolo)}" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe>
-    </div></div>`;
+      <iframe class="doc" id="doc" title="${esc(d.titolo)}" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-modals"></iframe>
+    </div>
+    <div class="banner" id="banner" hidden></div>
+    <div class="selbar" id="selbar" hidden></div>
+  </div>`;
 
   const reader = $('.reader');
   $('#tocBtn').onclick = () => {
@@ -351,6 +412,7 @@ function showReader(mId, dId, anchor) {
     t.onclick = () => { R.tab = t.dataset.tab; reader.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x === t)); renderSide(); };
   });
   $('#bmBtn').onclick = toggleSegnalibro;
+  $('#toolsBtn').onclick = apriStrumentiLettore;
 
   cacheGet(d.file).then((html) => {
     if (!R || R.d !== d) return;
@@ -360,18 +422,25 @@ function showReader(mId, dId, anchor) {
     frame.srcdoc = prepara(html, colore);
   });
   renderSide();
+  mostraBannerClaude();
+  // Scarico in background le note più recenti di questa dispensa.
+  if (!LOCALE && conf) A.note(m.id, d.id).scarica().then((c) => { if (c && R && R.d === d) { applicaAnnotazioni(); renderSide(); } }).catch(() => {});
 }
 
-function docPronto(frame, d, anchor) {
+async function docPronto(frame, d, anchor) {
   if (!R || R.d !== d) return;
   const doc = frame.contentDocument, win = frame.contentWindow;
   R.doc = doc; R.win = win;
+
+  await renderMatematica(doc);
+  if (!R || R.d !== d) return;
   R.heads = [...doc.querySelectorAll('h1[id], h2[id], h3[id]')].map((el) => ({
     id: el.id, el, level: +el.tagName[1], text: testoTitolo(el),
   }));
 
-  // Link interni: scorrono nella dispensa. Link esterni: si aprono a parte.
+  // Link interni: scorrono nella dispensa. Link esterni: si aprono a parte. Note e evidenziazioni: le gestisce note.js.
   doc.addEventListener('click', (e) => {
+    if (clicNelDocumento(e)) return;
     const a = e.target.closest && e.target.closest('a[href]');
     if (!a) return;
     const href = a.getAttribute('href');
@@ -379,6 +448,7 @@ function docPronto(frame, d, anchor) {
     if (href.startsWith('#')) vaiA(decodeURIComponent(href.slice(1)));
     else window.open(a.href, '_blank', 'noopener');
   });
+  collegaSelezione(doc);
 
   let raf = 0;
   win.addEventListener('scroll', () => {
@@ -386,7 +456,9 @@ function docPronto(frame, d, anchor) {
     raf = requestAnimationFrame(() => { raf = 0; aggiornaAttivo(); salvaPosizioneDopo(); });
   }, { passive: true });
 
-  const pos = store.get(K.pos, {})[chiave(R.m.id, d.id)];
+  applicaAnnotazioni();
+
+  const pos = posizioneSalvata(R.m.id, d.id);
   if (anchor) vaiA(anchor);
   else if (pos) {
     const h = pos.anchor && doc.getElementById(pos.anchor);
@@ -394,7 +466,6 @@ function docPronto(frame, d, anchor) {
   }
   aggiornaAttivo();
   renderSide();
-  segnaUltima();
 }
 
 // Le formule KaTeX contengono il testo due volte (MathML nascosto + versione visibile): tengo solo la seconda.
@@ -407,9 +478,9 @@ function testoTitolo(el) {
 const topDi = (el) => el.getBoundingClientRect().top + R.win.scrollY;
 
 function vaiA(id) {
-  const el = R && R.doc && R.doc.getElementById(id);
+  const el = R && R.doc && (R.doc.getElementById(id) || R.doc.querySelector(`[data-id="${CSS.escape(id)}"]`));
   if (!el) return;
-  R.win.scrollTo({ top: Math.max(0, topDi(el) - 8), behavior: 'auto' });
+  R.win.scrollTo({ top: Math.max(0, topDi(el) - (el.tagName === 'MARK' ? 120 : 8)), behavior: 'auto' });
   aggiornaAttivo();
   salvaPosizioneDopo();
   if (!largo()) $('.reader') && $('.reader').classList.remove('side-open');
@@ -423,6 +494,7 @@ function sezioneCorrente() {
 }
 
 function aggiornaAttivo() {
+  if (!R) return;
   const cur = sezioneCorrente();
   const id = cur ? cur.id : null;
   if (id !== R.active) {
@@ -452,32 +524,32 @@ function renderSide() {
     if (!R.heads.length) { list.innerHTML = '<div class="side-empty">' + (R.doc ? 'Questa dispensa non ha titoli di sezione.' : 'Caricamento…') + '</div>'; return; }
     list.innerHTML = R.heads.map((h) => `<button class="toc-item l${h.level}${h.id === R.active ? ' active' : ''}" data-id="${esc(h.id)}">${esc(h.text)}</button>`).join('');
     list.querySelectorAll('.toc-item').forEach((b) => { b.onclick = () => vaiA(b.dataset.id); });
-  } else {
-    const miei = store.get(K.bm, []).filter((b) => b.m === R.m.id && b.d === R.d.id);
+  } else if (R.tab === 'segnalibri') {
+    const miei = A.segnalibri().vivi().filter((b) => b.m === R.m.id && b.d === R.d.id);
     if (!miei.length) { list.innerHTML = '<div class="side-empty">Nessun segnalibro in questa dispensa. Tocca l\'icona del segnalibro in alto per salvare la sezione che stai leggendo.</div>'; return; }
     list.innerHTML = miei.map((b) => `<div class="bm-item"><button class="toc-item" data-id="${esc(b.anchor)}">${esc(b.titolo)}</button>
       <button class="icon-btn" data-del="${esc(b.id)}" aria-label="Elimina segnalibro">${ico.x}</button></div>`).join('');
     list.querySelectorAll('.toc-item').forEach((b) => { b.onclick = () => vaiA(b.dataset.id); });
-    bindSegnalibri(list, () => { renderSide(); aggiornaAttivo(); });
+    bindSegnalibri(list, () => { renderSide(); R.active = null; aggiornaAttivo(); });
+  } else {
+    renderListaNote(list);
   }
 }
 
 /* ---------- Segnalibri ---------- */
 function trovaSegnalibro(anchor) {
   if (!R || !anchor) return null;
-  return store.get(K.bm, []).find((b) => b.m === R.m.id && b.d === R.d.id && b.anchor === anchor) || null;
+  return A.segnalibri().vivi().find((b) => b.m === R.m.id && b.d === R.d.id && b.anchor === anchor) || null;
 }
 function toggleSegnalibro() {
   const cur = sezioneCorrente();
   if (!cur) { toast('Apri una sezione per salvarla'); return; }
-  const tutti = store.get(K.bm, []);
   const esiste = trovaSegnalibro(cur.id);
   if (esiste) {
-    store.set(K.bm, tutti.filter((b) => b.id !== esiste.id));
+    A.segnalibri().togli(esiste.id);
     toast('Segnalibro rimosso');
   } else {
-    tutti.unshift({ id: Date.now().toString(36), m: R.m.id, d: R.d.id, anchor: cur.id, titolo: cur.text, creato: Date.now() });
-    store.set(K.bm, tutti);
+    A.segnalibri().metti(nuovoId(), { m: R.m.id, d: R.d.id, anchor: cur.id, titolo: cur.text, creato: Date.now() });
     toast('Segnalibro aggiunto');
   }
   R.active = null;
@@ -486,45 +558,53 @@ function toggleSegnalibro() {
 }
 
 /* ---------- Posizione di lettura ---------- */
+// Durante la lettura la posizione si salva solo sul dispositivo; quando esci dalla dispensa
+// o chiudi l'app va anche nell'archivio condiviso, così "Riprendi" funziona su tutti i dispositivi.
 let posT;
-function salvaPosizioneDopo() { clearTimeout(posT); posT = setTimeout(salvaPosizione, 400); }
-function salvaPosizione() {
+function salvaPosizioneDopo() { clearTimeout(posT); posT = setTimeout(() => salvaPosizione(false), 400); }
+function salvaPosizione(condividi) {
   if (!R || !R.win) return;
   const cur = sezioneCorrente();
+  const p = cur ? { anchor: cur.id, delta: Math.round(R.win.scrollY - topDi(cur.el)), titolo: cur.text } : { y: Math.round(R.win.scrollY), titolo: '' };
+  const k = chiave(R.m.id, R.d.id);
   const all = store.get(K.pos, {});
-  all[chiave(R.m.id, R.d.id)] = cur ? { anchor: cur.id, delta: R.win.scrollY - topDi(cur.el) } : { y: R.win.scrollY };
+  all[k] = { ...p, t: Date.now() };
   store.set(K.pos, all);
-  segnaUltima(cur);
+  if (condividi) A.posizioni().metti(k, { ...p, m: R.m.id, d: R.d.id });
 }
-function segnaUltima(cur = sezioneCorrente()) {
-  if (!R) return;
-  store.set(K.last, { m: R.m.id, d: R.d.id, titolo: cur ? cur.text : '', quando: Date.now() });
+function posizioneSalvata(m, d) {
+  const k = chiave(m, d);
+  const locale = store.get(K.pos, {})[k];
+  const condivisa = A.posizioni().get(k);
+  if (locale && condivisa) return (condivisa.agg || 0) > (locale.t || 0) ? condivisa : locale;
+  return locale || condivisa || null;
 }
-window.addEventListener('pagehide', salvaPosizione);
+window.addEventListener('pagehide', () => { salvaPosizione(true); inviaTuttoOra(); });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { salvaPosizione(); return; }
+  if (document.hidden) { salvaPosizione(true); inviaTuttoOra(); return; }
+  mostraBannerClaude();
   const meta = store.get(K.meta, null);
   if ((conf || LOCALE) && (!meta || Date.now() - meta.ultimo > 60_000)) sync();
 });
 
 /* ---------- Menu ---------- */
 function apriMenu() {
-  const dlg = $('#menu');
   const meta = store.get(K.meta, null);
-  $('#menuInfo').textContent = `Versione ${VERSIONE} · archivio ${LOCALE ? 'locale (prova)' : conf.repo}` + (meta ? ` · aggiornato ${fmtData(meta.ultimo)}` : '');
-  dlg.querySelector('[data-act="sync"]').onclick = () => { dlg.close(); sync({ manuale: true }); };
-  const out = dlg.querySelector('[data-act="logout"]');
-  out.hidden = LOCALE;
-  out.onclick = async () => {
-    if (!confirm('Scollegare GitHub da questo dispositivo? Le dispense salvate qui verranno cancellate (restano su GitHub).')) return;
-    dlg.close();
-    [K.conf, K.shas, K.meta].forEach(store.del);
-    try { await caches.delete(CACHE_CONTENUTI); } catch { /* niente */ }
-    memo.clear(); conf = null; data = null; R = null;
-    location.hash = '#/';
-    showLogin();
-  };
-  dlg.showModal();
+  const info = `Versione ${VERSIONE} · archivio ${LOCALE ? 'locale (prova)' : conf.repo}` + (meta ? ` · aggiornato ${fmtData(meta.ultimo)}` : '');
+  const azioni = [
+    { label: 'Aggiorna ora', icona: ico.sync, fn: () => sync({ manuale: true }) },
+    { label: 'Richieste di modifica', icona: ico.matita, fn: () => { location.hash = '#/richieste'; } },
+  ];
+  if (!LOCALE) azioni.push({ label: 'Scollega GitHub da questo dispositivo', classe: 'danger', fn: scollega });
+  apriFoglio('Quaderno', azioni, info);
+}
+async function scollega() {
+  if (!confirm('Scollegare GitHub da questo dispositivo? Le dispense salvate qui verranno cancellate (restano su GitHub).')) return;
+  [K.conf, K.shas, K.meta].forEach(store.del);
+  try { await caches.delete(CACHE_CONTENUTI); } catch { /* niente */ }
+  memo.clear(); conf = null; data = null; R = null;
+  location.hash = '#/';
+  showLogin();
 }
 
 /* ---------- Accesso ---------- */
@@ -585,15 +665,16 @@ async function avvio() {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (!giaControllata || ricaricata) return;
       ricaricata = true;
-      salvaPosizione();
+      salvaPosizione(true);
       location.reload();
     });
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
+  migraSegnalibriVecchi();
   if (!LOCALE && !conf) return showLogin();
   const txt = await cacheGet('materie.json');
   if (txt) { try { data = JSON.parse(txt); } catch { data = null; } }
   route();
   sync();
 }
-avvio();
+window.addEventListener('DOMContentLoaded', avvio);
