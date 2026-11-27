@@ -1,13 +1,13 @@
 /* Service worker: tiene l'app disponibile offline.
    Le dispense sono salvate a parte da app.js (cache "quaderno-contenuti-*"). */
-const SHELL = 'quaderno-shell-v1';
+const SHELL = 'quaderno-shell-v2';
 const FILES = [
   './', './index.html', './styles.css', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {

@@ -3,7 +3,7 @@
 /* Quaderno: legge le dispense dall'archivio GitHub privato, le salva sul
    dispositivo per l'uso offline e le mostra con indice e segnalibri. */
 
-const VERSIONE = '0.1.0';
+const VERSIONE = '0.1.1';
 const ARCHIVIO_PREDEFINITO = 'federicovicini08/dispense';
 const CACHE_CONTENUTI = 'quaderno-contenuti-v1';
 
@@ -137,8 +137,9 @@ async function sync({ manuale = false } = {}) {
     else if (!LOCALE && nuove) toast(`${nuove} dispense salvate per l'uso offline`);
     else if (manuale) toast('Tutto aggiornato');
   } catch (e) {
+    ultimoErrore = descriviErrore(e);
     if (e.status === 401) { showLogin('Il token non è più valido o è scaduto. Collegati di nuovo.'); return; }
-    if (e.status === 404 && !LOCALE) { showLogin('Archivio non trovato. Controlla il nome e che il token abbia accesso a questo archivio.'); return; }
+    if ((e.status === 403 || e.status === 404) && !LOCALE) { showLogin(MSG_PERMESSI); return; }
     toast(navigator.onLine ? 'Aggiornamento non riuscito: uso la copia salvata' : 'Sei offline: uso la copia salvata');
   } finally {
     syncing = false;
@@ -154,8 +155,24 @@ function setSyncUI(on) {
   const b = $('#syncBtn');
   if (b) b.classList.toggle('spin', on);
 }
+let ultimoErrore = '';
+const MSG_PERMESSI = 'Il token entra nell\'archivio ma non può leggere i file. Su GitHub apri il token e controlla: Repository access → "dispense" selezionato, e Permissions → Contents → "Read and write". Poi incolla di nuovo il token qui.';
+function descriviErrore(e) {
+  if (e && e.status) return 'GitHub ha risposto con il codice ' + e.status;
+  return (e && (e.name + ': ' + e.message)) || String(e);
+}
 function dopoSync(cambiati) {
-  if (!data) { if (!$('.login')) app.innerHTML = '<div class="loading">Nessuna copia salvata. Collegati a internet per scaricare le dispense.</div>'; return; }
+  if (!data) {
+    if ($('.login')) return;
+    app.innerHTML = `<div class="loading"><div style="max-width:420px;text-align:center;padding:24px">
+      <p>Non sono riuscito a scaricare le dispense e su questo dispositivo non c'è ancora una copia salvata.</p>
+      ${ultimoErrore ? `<p class="muted" style="font-size:14px">Dettaglio: ${esc(ultimoErrore)}</p>` : ''}
+      <button class="primary" id="riprova">Riprova</button>
+      <button class="sheet-btn ghost" id="ricollega">Collega di nuovo GitHub</button></div></div>`;
+    $('#riprova').onclick = () => { app.innerHTML = '<div class="loading">Scarico le dispense…</div>'; sync({ manuale: true }); };
+    $('#ricollega').onclick = () => showLogin();
+    return;
+  }
   if (R && R.d.file && cambiati.has(R.d.file)) { salvaPosizione(); const { m, d } = R; R = null; showReader(m.id, d.id); return; }
   if (!R) route();
 }
@@ -521,6 +538,9 @@ function showLogin(errore) {
     btn.disabled = true; btn.textContent = 'Controllo…';
     try {
       await gh(`/repos/${repoV}`, false, tokenV);
+      // Controlla subito anche il permesso di leggere i file (Contents).
+      try { await gh(`/repos/${repoV}/contents/materie.json`, false, tokenV); }
+      catch (err2) { if (err2.status === 403 || err2.status === 404) { showLogin(MSG_PERMESSI); return; } throw err2; }
       conf = { repo: repoV, token: tokenV };
       store.set(K.conf, conf);
       store.del(K.shas);
@@ -538,6 +558,15 @@ function showLogin(errore) {
 /* ---------- Avvio ---------- */
 async function avvio() {
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    // Quando arriva una nuova versione dell'app, ricarica una volta per usarla subito.
+    const giaControllata = !!navigator.serviceWorker.controller;
+    let ricaricata = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!giaControllata || ricaricata) return;
+      ricaricata = true;
+      salvaPosizione();
+      location.reload();
+    });
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
   if (!LOCALE && !conf) return showLogin();
