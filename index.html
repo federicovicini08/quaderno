@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Quaderno</title>
+  <meta name="description" content="Le tue dispense, su ogni dispositivo.">
+  <meta name="theme-color" content="#121419">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Quaderno">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app" aria-live="polite"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <dialog id="menu" class="sheet">
+    <form method="dialog">
+      <h2>Quaderno</h2>
+      <p class="muted" id="menuInfo"></p>
+      <button type="button" class="sheet-btn" data-act="sync">Aggiorna ora</button>
+      <button type="button" class="sheet-btn danger" data-act="logout">Scollega GitHub da questo dispositivo</button>
+      <button class="sheet-btn ghost" value="close">Chiudi</button>
+    </form>
+  </dialog>
+  <script src="app.js"></script>
+</body>
+</html>
