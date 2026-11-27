@@ -3,7 +3,7 @@
 /* Quaderno: legge le dispense dall'archivio GitHub privato, le salva sul
    dispositivo per l'uso offline e le mostra con indice e segnalibri. */
 
-const VERSIONE = '0.1.1';
+const VERSIONE = '0.1.2';
 const ARCHIVIO_PREDEFINITO = 'federicovicini08/dispense';
 const CACHE_CONTENUTI = 'quaderno-contenuti-v1';
 
@@ -84,6 +84,18 @@ async function gh(path, raw = false, token = conf && conf.token) {
   if (!r.ok) { const e = new Error('GitHub ' + r.status); e.status = r.status; throw e; }
   return raw ? r.text() : r.json();
 }
+// Scarica un file per il suo codice (sha). Se la versione "grezza" non riesce, usa quella in base64.
+async function scaricaBlob(sha) {
+  try { return await gh(`/repos/${conf.repo}/git/blobs/${sha}`, true); }
+  catch (e) {
+    if (e.status === 401 || e.status === 403 || e.status === 404) throw e;
+    const j = await gh(`/repos/${conf.repo}/git/blobs/${sha}`);
+    const bin = atob(j.content.replace(/\s/g, ''));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+}
 async function localeGet(path) {
   const r = await fetch('../dispense/' + path, { cache: 'no-store' });
   if (!r.ok) { const e = new Error('Locale ' + r.status); e.status = r.status; throw e; }
@@ -97,18 +109,22 @@ async function sync({ manuale = false } = {}) {
   syncing = true;
   setSyncUI(true);
   const cambiati = new Set();
+  let fase = 'avvio';
+  const falliti = [];
   try {
     const shas = store.get(K.shas, {});
     let remoto = null;
     if (!LOCALE) {
+      fase = 'elenco dei file';
       const albero = await gh(`/repos/${conf.repo}/git/trees/HEAD?recursive=1`);
       remoto = {};
       for (const it of albero.tree) if (it.type === 'blob') remoto[it.path] = it.sha;
       if (!remoto['materie.json']) throw new Error('materie.json mancante');
     }
-    const scarica = (path) => (LOCALE ? localeGet(path) : gh(`/repos/${conf.repo}/git/blobs/${remoto[path]}`, true));
+    const scarica = (path) => (LOCALE ? localeGet(path) : scaricaBlob(remoto[path]));
     const serve = async (path) => LOCALE || shas[path] !== remoto[path] || !(await cacheGet(path));
 
+    fase = 'elenco delle materie';
     if (await serve('materie.json')) {
       const txt = await scarica('materie.json');
       JSON.parse(txt);
@@ -123,7 +139,9 @@ async function sync({ manuale = false } = {}) {
         if (!d.file || (remoto && !remoto[d.file])) continue;
         if (!(await serve(d.file))) continue;
         const giaSalvata = !!(await cacheGet(d.file));
-        const txt = await scarica(d.file);
+        let txt;
+        try { txt = await scarica(d.file); }
+        catch (e) { if (e.status === 401) throw e; falliti.push(d.titolo + ' (' + descriviErrore(e) + ')'); continue; }
         if (LOCALE && memo.get(d.file) === txt) continue;
         await cachePut(d.file, txt);
         if (remoto) shas[d.file] = remoto[d.file];
@@ -136,8 +154,9 @@ async function sync({ manuale = false } = {}) {
     if (!LOCALE && aggiornate) toast(aggiornate === 1 ? '1 dispensa aggiornata' : `${aggiornate} dispense aggiornate`);
     else if (!LOCALE && nuove) toast(`${nuove} dispense salvate per l'uso offline`);
     else if (manuale) toast('Tutto aggiornato');
+    if (falliti.length) { ultimoErrore = 'Non scaricate: ' + falliti.join('; '); toast('Alcune dispense non si sono scaricate: tocca Aggiorna per riprovare'); }
   } catch (e) {
-    ultimoErrore = descriviErrore(e);
+    ultimoErrore = 'Fase: ' + fase + ' — ' + descriviErrore(e);
     if (e.status === 401) { showLogin('Il token non è più valido o è scaduto. Collegati di nuovo.'); return; }
     if ((e.status === 403 || e.status === 404) && !LOCALE) { showLogin(MSG_PERMESSI); return; }
     toast(navigator.onLine ? 'Aggiornamento non riuscito: uso la copia salvata' : 'Sei offline: uso la copia salvata');
@@ -168,7 +187,8 @@ function dopoSync(cambiati) {
       <p>Non sono riuscito a scaricare le dispense e su questo dispositivo non c'è ancora una copia salvata.</p>
       ${ultimoErrore ? `<p class="muted" style="font-size:14px">Dettaglio: ${esc(ultimoErrore)}</p>` : ''}
       <button class="primary" id="riprova">Riprova</button>
-      <button class="sheet-btn ghost" id="ricollega">Collega di nuovo GitHub</button></div></div>`;
+      <button class="sheet-btn ghost" id="ricollega">Collega di nuovo GitHub</button>
+      <p class="muted" style="font-size:12px;margin-top:16px">Quaderno ${VERSIONE}</p></div></div>`;
     $('#riprova').onclick = () => { app.innerHTML = '<div class="loading">Scarico le dispense…</div>'; sync({ manuale: true }); };
     $('#ricollega').onclick = () => showLogin();
     return;
@@ -528,6 +548,7 @@ function showLogin(errore) {
       <li>In <b>Permissions → Repository permissions</b> imposta <b>Contents</b> su <b>Read and write</b>.</li>
       <li>Tocca <b>Generate token</b>, copia il codice e incollalo qui. Il token resta salvato solo su questo dispositivo.</li>
     </ol></details>
+    <p class="muted" style="font-size:12px;margin-top:24px">Quaderno ${VERSIONE}</p>
   </div></main>`;
   $('#loginForm').onsubmit = async (e) => {
     e.preventDefault();
